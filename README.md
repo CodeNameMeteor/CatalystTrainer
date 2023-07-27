@@ -8,11 +8,17 @@ Download the launcher and dll, and place them both in the same folder of your ch
 ## Default Keybinds
 
 Insert - Open and Close Menu
+
 1 - Godmode
+
 2 - Noclip
+
 3 - NoStumble
+
 4 - Save Position
+
 5 - Go To Saved Position
+
 F - Bhop tool 
 
 ## Future Plans
