@@ -26,6 +26,6 @@ F - Bhop tool
 
 [btbd](https://github.com/btbd)/[Toyro98](https://github.com/Toyro98) - for their work on the mirrors edge [mpmod](https://github.com/Toyro98/mmultiplayer), directly inspiring this and many of the features included.
 
-Frxsty - For being a tester, as well as giving ideas and feedback to make the trainer what is today.
+[Frxsty](https://www.youtube.com/@IBelongInAMentalHospital) - For being a tester, as well as giving ideas and feedback to make the trainer what is today.
 
 And a big credit to the entire Mirrors Edge Catalyst Community who have shown me love and praise for making this
