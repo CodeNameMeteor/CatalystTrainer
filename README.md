@@ -26,15 +26,10 @@ F - Bhop tool
 - [ ] Refactoring codebase
 
 - [ ] Cboost tool
-
 - [ ] Saving keybinds
-
 - [ ] Allowing any keybind for the bhop tool
-
 - [ ] Storing Angle and Velocity for teleporter
-
 - [ ] Improve No-Stumble
-- [ ] works
 ## Credits
 [Tommoa](https://github.com/Tommoa) - For the original mec trainer.
 
