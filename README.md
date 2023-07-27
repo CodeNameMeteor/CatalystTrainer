@@ -31,10 +31,10 @@ F - Bhop tool
 
 - [ ] Allowing any keybind for the bhop tool
 
-- [] Storing Angle and Velocity for teleporter
+- [ ] Storing Angle and Velocity for teleporter
 
-- [] Improve No-Stumble
-- [] works
+- [ ] Improve No-Stumble
+- [ ] works
 ## Credits
 [Tommoa](https://github.com/Tommoa) - For the original mec trainer.
 
