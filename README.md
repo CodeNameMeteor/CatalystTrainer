@@ -22,6 +22,6 @@ F - Bhop tool
 
 [Tremwil](https://github.com/tremwil) - For the [catalyst Noclip injected tool](https://github.com/tremwil/CatalystNoclipInjected). 
 
-[Derwangler](https://github.com/derwangler) - For the years of reverse engineering and finding many of the pointers used.
+[Derwangler](https://github.com/derwangler) - For the years of reverse engineering Mirrors edge catalyst and finding many of the pointers used.
 
 [btbd](https://github.com/btbd)/[Toyro98](https://github.com/Toyro98) - for their work on the mirrors edge [mpmod](https://github.com/Toyro98/mmultiplayer), directly inspiring this and many of the features included.
