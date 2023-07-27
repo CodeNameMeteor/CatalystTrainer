@@ -23,12 +23,17 @@ F - Bhop tool
 > :memo: **Note:** The Jump Keybind must be set as Spacebar for the bhop tool to work, but will be hopefully fixed in versions. Apologies for the inconvenience
 
 ## Future Plans
-[ ] Refactoring codebase
-[ ] Cboost tool
-[ ] Saving keybinds
-[ ] Allowing any keybind for the bhop tool
-[ ] Storing Angle and Velocity for teleporter
-[ ] Improve No-Stumble
+-[ ] Refactoring codebase
+
+-[ ] Cboost tool
+
+-[ ] Saving keybinds
+
+-[ ] Allowing any keybind for the bhop tool
+
+-[ ] Storing Angle and Velocity for teleporter
+
+-[ ] Improve No-Stumble
 
 ## Credits
 [Tommoa](https://github.com/Tommoa) - For the original mec trainer.
