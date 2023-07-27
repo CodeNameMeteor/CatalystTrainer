@@ -1,9 +1,9 @@
 # CatalystTrainer
 The All-In-One Catalyst trainer.
 
-## Installation
-
-Download the launcher and dll, and place them both in the same folder of your choosing. While the game is running, run the launcher console and click on the game, wait for the console to close and the menu should open.
+## Setup
+1. Download The Latest Dll Version
+2. Run The LauncherConsole, while the game is running and click on the game.
 
 ## Default Keybinds
 
