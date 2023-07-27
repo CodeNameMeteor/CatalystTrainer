@@ -34,7 +34,7 @@ F - Bhop tool
 -[ ] Storing Angle and Velocity for teleporter
 
 -[ ] Improve No-Stumble
-
+- [x] works
 ## Credits
 [Tommoa](https://github.com/Tommoa) - For the original mec trainer.
 
