@@ -20,6 +20,7 @@ Insert - Open and Close Menu
 5 - Go To Saved Position
 
 F - Bhop tool 
+> :memo: **Note:** The Jump Keybind must be set as Spacebar, but will be hopefully fixed in versions. Apologies for the inconvenience
 
 ## Future Plans
 
