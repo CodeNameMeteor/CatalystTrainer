@@ -30,6 +30,8 @@ F - Bhop tool
 - [ ] Allowing any keybind for the bhop tool
 - [ ] Storing Angle and Velocity for teleporter
 - [ ] Improve No-Stumble
+- [ ] A Public repo, for collaboration (Would most likely not include bhop tool, to prevent cheating)
+- [ ] An Improved Dll injector
 ## Credits
 [Tommoa](https://github.com/Tommoa) - For the original mec trainer.
 
