@@ -1,0 +1,31 @@
+# CMake build directories
+build/
+out/
+bin/
+.vs/
+.cache/
+CMakeCache.txt
+CMakeFiles/
+
+# Compiled binaries
+*.exe
+*.dll
+*.lib
+*.a
+*.so
+*.dylib
+*.pdb
+*.exp
+*.ilk
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Environment / user config files
+*.user
+*.suo
+*.sln
+*.ini
