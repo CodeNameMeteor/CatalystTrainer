@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(MEC_Trainer LANGUAGES CXX C)
 
+# Only allow 64-bit generators
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR "MEC_Trainer must be configured for a 64-bit generator (for example: cmake -A x64 ...)")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
