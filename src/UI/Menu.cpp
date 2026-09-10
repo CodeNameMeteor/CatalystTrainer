@@ -199,9 +199,9 @@ namespace UI
         ImGui::Separator();
         //ImGui::Text("Active Cheats");
 
-        ImGui::Checkbox("God Mode (Immortality) [1]", &cfg.State.godMode);
-        ImGui::Checkbox("No-Stumble (No Fall Damage Stumble) [3]", &cfg.State.noStumble);
-        ImGui::Checkbox("Noclip (Fly Through World) [2]", &cfg.State.noclip);
+        ImGui::Checkbox("God Mode (Immortality) ", &cfg.State.godMode);
+        ImGui::Checkbox("Noclip (Fly Through World) ", &cfg.State.noclip);
+        ImGui::Checkbox("No-Stumble (No Fall Damage Stumble) ", &cfg.State.noStumble);
         if (cfg.State.noclip)
         {
             ImGui::Indent();
