@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(MEC_Trainer LANGUAGES CXX C)
 
+# Mirror's Edge Catalyst is a 64-bit process. Building an x86 DLL (or an x86
+# injector) produces a binary that may look valid to the injector but cannot
+# execute the trainer inside the game.
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR "MEC_Trainer must be configured for a 64-bit generator (for example: cmake -A x64 ...)")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
