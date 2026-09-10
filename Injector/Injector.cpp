@@ -74,6 +74,10 @@ BOOL CALLBACK EnumWindowsCallback(HWND hWnd, LPARAM lParam)
         GetWindowTextW(hWnd, windowTitle, 256);
         std::wstring wsTitle(windowTitle);
 
+        wchar_t className[256];
+        GetClassNameW(hWnd, className, 256);
+        std::wstring wsClass(className);
+
         // Ignore EA Activation or dummy windows
         if (wsTitle.find(L"Activation") != std::wstring::npos ||
             wsTitle.find(L"EA") != std::wstring::npos ||
@@ -82,17 +86,23 @@ BOOL CALLBACK EnumWindowsCallback(HWND hWnd, LPARAM lParam)
             return TRUE; // Continue looking
         }
 
-        // Specifically look for the game window (Mirror's Edge Catalyst)
-        if (wsTitle.find(L"Mirror's Edge") != std::wstring::npos || wsTitle.find(L"Catalyst") != std::wstring::npos)
+        // Check window size to ignore dummy/splash windows
+        RECT rect;
+        GetClientRect(hWnd, &rect);
+        int width = rect.right - rect.left;
+        int height = rect.bottom - rect.top;
+
+        if (width < 640 || height < 480)
+        {
+            return TRUE; // Continue looking, this is likely a splash screen or dummy window
+        }
+
+        // Specifically look for the game window by title
+        if (wsTitle.find(L"Mirror's Edge") != std::wstring::npos || 
+            wsTitle.find(L"Catalyst") != std::wstring::npos)
         {
             data->hWnd = hWnd;
             return FALSE; // Found it! Stop enumerating
-        }
-        
-        // If we found a visible window with a title that isn't blacklisted, store it as a fallback but keep looking
-        if (data->hWnd == nullptr)
-        {
-            data->hWnd = hWnd;
         }
     }
     return TRUE;
@@ -222,11 +232,9 @@ int main()
     // Wait for the window to be created
     std::wcout << L"[*] Waiting for game window to be ready...\n";
     HWND hGameWindow = nullptr;
-    int windowWaitAttempts = 0;
-    while (!(hGameWindow = GetGameWindow(pid)) && windowWaitAttempts < 20)
+    while (!(hGameWindow = GetGameWindow(pid)))
     {
         Sleep(500);
-        windowWaitAttempts++;
     }
 
     if (hGameWindow)
