@@ -46,6 +46,7 @@ namespace Features
             {
                 cfg.State.noclip = !cfg.State.noclip;
                 cfg.State.godMode = cfg.State.noclip;
+                Core::Memory::SafeWrite<int>(game.Addrs.immortal, cfg.State.godMode ? 1 : 0);
             }
             else if (keyCode == cfg.Keys.noStumble)
             {
@@ -267,11 +268,8 @@ void TrainerFeatures::TeleportToSaved()
         Core::Memory::SafeWrite<float>(game.Addrs.playerZ, m_NoclipPos.z);
 
         Core::Memory::SafeWrite<float>(game.Addrs.playerVelocity, 0.0f);
+        Core::Memory::SafeWrite<float>(game.Addrs.lastGroundY, -2000.0f);
 
-        //Core::Memory::SafeWrite<float>(game.Addrs.lastGroundY, m_NoclipPos.y);
-
-
-        Core::Memory::SafeWrite<bool>(game.Addrs.onGroundStatus, true);
         Core::Memory::SafeWrite<int>(game.Addrs.playerState, 2);
 
 
