@@ -1,4 +1,5 @@
 #include "Features/TrainerFeatures.hpp"
+#include "Features/MovementProperties.hpp"
 #include "Game/GameOffsets.hpp"
 #include "Core/Memory.hpp"
 #include <cmath>
@@ -153,6 +154,32 @@ void TrainerFeatures::TeleportToSaved()
     Core::Memory::SafeWrite<float>(Core::Memory::ResolvePtrChain(fBase, { 0x408, 0x380, 0x1C44 }), 6.0f);
     Core::Memory::SafeWrite<float>(Core::Memory::ResolvePtrChain(fBase, { 0x408, 0x380, 0x1C48 }), 5.0f);
 }
+
+    void TrainerFeatures::Shutdown()
+    {
+        auto& game = Game::GameState::Get();
+
+        // Restore Input
+        Core::Memory::SafeWrite<int>(game.Addrs.inputEnabled, 0);
+        Core::Memory::SafeWrite<int>(game.Addrs.mouseEnabled, 0);
+
+        // Restore God Mode
+        Core::Memory::SafeWrite<int>(game.Addrs.immortal, 0);
+
+        // Restore Noclip state
+        if (m_NoclipActive && game.HasPlayer())
+        {
+            Core::Memory::SafeWrite<int>(game.Addrs.playerState, 2);
+            Core::Memory::SafeWrite<float>(game.Addrs.playerVelocity, 0.0f);
+        }
+
+        // Restore Time Scale
+        uintptr_t engine = Game::Offsets::EngineSettings();
+        Core::Memory::SafeWrite<float>(Core::Memory::ResolvePtrChain(engine, { 0x48 }), 1.0f);
+
+        // Reset all custom movement property sliders to vanilla
+        Features::MovementManager::Get().ResetAll();
+    }
 
     void TrainerFeatures::Tick()
     {

@@ -41,6 +41,7 @@ DWORD WINAPI MainThread(LPVOID lpParam)
         Sleep(16);
     }
 
+    Features::TrainerFeatures::Get().Shutdown();
     return 0;
 }
 
