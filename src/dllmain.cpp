@@ -3,6 +3,7 @@
 #include "Core/Config.hpp"
 #include "Core/Memory.hpp"
 #include "Game/GameState.hpp"
+#include "Features/TrainerFeatures.hpp"
 #include <iostream>
 
 DWORD WINAPI MainThread(LPVOID lpParam)
@@ -30,7 +31,17 @@ DWORD WINAPI MainThread(LPVOID lpParam)
         Sleep(250);
     }
 
-    return hooked ? 0 : 1;
+    if (!hooked) return 1;
+
+    // Background Game Logic Thread
+    while (!Core::IsUnloadRequested())
+    {
+        Game::GameState::Get().Update();
+        Features::TrainerFeatures::Get().Tick();
+        Sleep(16);
+    }
+
+    return 0;
 }
 
 namespace Core

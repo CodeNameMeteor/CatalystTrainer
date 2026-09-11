@@ -149,9 +149,7 @@ namespace Core
             }
         }
 
-        // Update Game State & Execute Active Cheats
-        Game::GameState::Get().Update();
-        Features::TrainerFeatures::Get().Tick();
+        // Background thread handles game logic and cheat ticks now.
 
         // Render UI
         ImGui_ImplDX11_NewFrame();
@@ -209,5 +207,10 @@ namespace Core
     void UnloadTrainer()
     {
         g_UnloadRequested.store(true);
+    }
+
+    bool IsUnloadRequested()
+    {
+        return g_UnloadRequested.load();
     }
 }

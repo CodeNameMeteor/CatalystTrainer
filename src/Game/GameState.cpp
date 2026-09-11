@@ -14,14 +14,13 @@ namespace Game
     void GameState::Update()
     {
         DWORD currentTick = GetTickCount();
-        if (currentTick - m_LastUpdateTick < 33) // ~30Hz polling rate
+        if (currentTick - m_LastUpdateTick < 16) // ~60Hz polling rate
             return;
         m_LastUpdateTick = currentTick;
 
       
         uintptr_t loadPtr = Core::Memory::ResolvePtrChain(Offsets::LoadingState(), { 0x4C1 });
         m_IsLoading = Core::Memory::SafeRead<bool>(loadPtr, true);
-
 
         uintptr_t pX = Core::Memory::ResolvePtrChain(Offsets::PlayerEntity(), { 0xD0, 0x128, 0x30, 0x50 });
         Addrs.playerX = pX;
@@ -43,6 +42,7 @@ namespace Game
         Addrs.camSin = Core::Memory::ResolvePtrChain(Offsets::CameraAnglesBase(), { 0x70, 0x98, 0x238, 0x18, 0x22C4 });
         Addrs.camCos = Core::Memory::ResolvePtrChain(Offsets::CameraAnglesBase(), { 0x70, 0x98, 0x238, 0x18, 0x22CC });
         Addrs.onGroundStatus = Core::Memory::ResolvePtrChain(Offsets::GroundStatusBase(), { 0x20, 0x20, 0x40, 0x20, 0x17 });
+        Addrs.camFwdX = Core::Memory::ResolvePtrChain(Offsets::CameraMatrixBase(), { 0x68, 0x568, 0x14a0, 0x250, 0x70 });
 
 
         m_PlayerPos.x = Core::Memory::SafeRead<float>(Addrs.playerX);
@@ -57,12 +57,11 @@ namespace Game
         m_DashStarted = Core::Memory::SafeRead<bool>(Addrs.dashStarted);
         m_InMenu = Core::Memory::SafeRead<int>(Offsets::InMenuAddress());
 
-        uintptr_t camFwdX = Core::Memory::ResolvePtrChain(Offsets::CameraMatrixBase(), { 0x68, 0x568, 0x14a0, 0x250, 0x70 });
-        if (camFwdX)
+        if (Addrs.camFwdX)
         {
-            m_CameraForward.x = Core::Memory::SafeRead<float>(camFwdX);
-            m_CameraForward.y = Core::Memory::SafeRead<float>(camFwdX + 0x4);
-            m_CameraForward.z = Core::Memory::SafeRead<float>(camFwdX + 0x8);
+            m_CameraForward.x = Core::Memory::SafeRead<float>(Addrs.camFwdX);
+            m_CameraForward.y = Core::Memory::SafeRead<float>(Addrs.camFwdX + 0x4);
+            m_CameraForward.z = Core::Memory::SafeRead<float>(Addrs.camFwdX + 0x8);
         }
     }
 }

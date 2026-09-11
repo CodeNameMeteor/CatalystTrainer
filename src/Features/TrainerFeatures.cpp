@@ -57,7 +57,7 @@ namespace Features
             }
             else if (keyCode == cfg.Keys.gotoTeleport)
             {
-                TeleportToSaved();
+                m_NeedsTeleport = true;
             }
             else if (keyCode == cfg.Keys.bhop && !cfg.State.bhop && !game.IsContentActive())
             {
@@ -140,7 +140,6 @@ void TrainerFeatures::TeleportToSaved()
     Core::Memory::SafeWrite<float>(game.Addrs.playerX, m_SavedPos.x);
     Core::Memory::SafeWrite<float>(game.Addrs.playerY, m_SavedPos.y);
     Core::Memory::SafeWrite<float>(game.Addrs.playerZ, m_SavedPos.z);
-    Core::Memory::SafeWrite<float>(Game::Offsets::TimeOfDayBase(), 0.0f);
 
     Sleep(50);
 
@@ -152,13 +151,23 @@ void TrainerFeatures::TeleportToSaved()
     Core::Memory::SafeWrite<float>(Core::Memory::ResolvePtrChain(fBase, { 0x408, 0x380, 0x1C40 }), 3.0f);
     Core::Memory::SafeWrite<float>(Core::Memory::ResolvePtrChain(fBase, { 0x408, 0x380, 0x1C44 }), 6.0f);
     Core::Memory::SafeWrite<float>(Core::Memory::ResolvePtrChain(fBase, { 0x408, 0x380, 0x1C48 }), 5.0f);
-    Core::Memory::SafeWrite<float>(Game::Offsets::TimeOfDayBase(), 1.0f);
 }
 
     void TrainerFeatures::Tick()
     {
         auto& cfg = Core::ConfigManager::Get();
         auto& game = Game::GameState::Get();
+
+        if (m_NeedsTeleport)
+        {
+            TeleportToSaved();
+            m_NeedsTeleport = false;
+        }
+
+        if (cfg.State.freezeTime)
+        {
+            Core::Memory::SafeWrite<float>(game.Addrs.timeOfDay, cfg.State.frozenTimeValue);
+        }
 
         //ProcessGodMode();
         ProcessNoclip();
@@ -244,7 +253,7 @@ void TrainerFeatures::TeleportToSaved()
             if (GetAsyncKeyState('A') & 0x8000) { delta.x += left.x;    delta.y += left.y;    delta.z += left.z; }
             if (GetAsyncKeyState('D') & 0x8000) { delta.x += right.x;   delta.y += right.y;   delta.z += right.z; }
             if (GetAsyncKeyState(VK_SPACE) & 0x8000)   delta.y += 0.6f;
-            if (GetAsyncKeyState(VK_CONTROL) & 0x8000 || GetAsyncKeyState('C') & 0x8000) delta.y -= 0.6f;
+            if (GetAsyncKeyState(VK_SHIFT) & 0x8000 || GetAsyncKeyState('C') & 0x8000) delta.y -= 0.6f;
         }
 
         float currentSpeed = cfg.State.noclipSpeed * speedMultiplier;

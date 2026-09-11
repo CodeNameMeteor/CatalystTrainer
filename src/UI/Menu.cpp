@@ -143,11 +143,13 @@ namespace UI
         ImGui::Text("World & Environment Controls");
         ImGui::Separator();
 
-        float timeOfDay = game.GetTimeOfDay();
+        float timeOfDay = cfg.State.freezeTime ? cfg.State.frozenTimeValue : game.GetTimeOfDay();
         int hours = static_cast<int>(timeOfDay / 3600.0f);
         if (ImGui::SliderInt("Time of Day (Hours)", &hours, 0, 24))
         {
-            Core::Memory::SafeWrite<float>(game.Addrs.timeOfDay, static_cast<float>(hours * 3600));
+            float newTime = static_cast<float>(hours * 3600);
+            cfg.State.frozenTimeValue = newTime;
+            Core::Memory::SafeWrite<float>(game.Addrs.timeOfDay, newTime);
         }
 
         ImGui::Checkbox("Freeze Time of Day", &cfg.State.freezeTime);
