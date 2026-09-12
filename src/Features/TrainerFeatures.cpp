@@ -298,6 +298,7 @@ void TrainerFeatures::TeleportToSaved()
         Core::Memory::SafeWrite<float>(game.Addrs.lastGroundY, -2000.0f);
 
         Core::Memory::SafeWrite<int>(game.Addrs.playerState, 2);
+        //Core::Memory::SafeWrite<int>(game.Addrs.onGroundStatus, 1);
 
 
         Core::Memory::SafeWrite<int>(game.Addrs.wallclimbCount, 0);
@@ -362,6 +363,7 @@ void TrainerFeatures::TeleportToSaved()
             Core::Memory::SafeWrite<float>(Core::Memory::ResolvePtrChain(fBase, { 0x408, 0x380, 0x1C48 }), 4.0f);
         }
     }
+
 
     void TrainerFeatures::ProcessWallMovement()
     {

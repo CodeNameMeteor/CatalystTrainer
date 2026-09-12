@@ -14,7 +14,7 @@ namespace Game
     void GameState::Update()
     {
         DWORD currentTick = GetTickCount();
-        if (currentTick - m_LastUpdateTick < 16) // ~60Hz polling rate
+        if (currentTick - m_LastUpdateTick < 3) // 
             return;
         m_LastUpdateTick = currentTick;
 
