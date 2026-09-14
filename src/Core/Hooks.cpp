@@ -26,6 +26,7 @@ namespace Core
     static ID3D11Device* pDevice = nullptr;
     static ID3D11DeviceContext* pContext = nullptr;
     static ID3D11RenderTargetView* pRenderTarget = nullptr;
+    static IDXGISwapChain* pLastSwapChain = nullptr;
     static HWND hGameWindow = nullptr;
     static bool bInitialized = false;
     static std::atomic<bool> g_UnloadRequested{ false };
@@ -141,10 +142,62 @@ namespace Core
                 ImGui_ImplWin32_Init(hGameWindow);
                 ImGui_ImplDX11_Init(pDevice, pContext);
 
+                pLastSwapChain = pSwapChain;
                 bInitialized = true;
             }
             else
             {
+                return oPresent(pSwapChain, SyncInterval, Flags);
+            }
+        }
+        else
+        {
+            // If already initialized, check if the swapchain or device changed (e.g. on full screen toggle)
+            bool needsReinit = (pSwapChain != pLastSwapChain);
+            
+            ID3D11Device* currentDevice = nullptr;
+            if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&currentDevice))))
+            {
+                if (currentDevice != pDevice)
+                {
+                    needsReinit = true;
+                }
+                currentDevice->Release();
+            }
+            
+            if (needsReinit)
+            {
+                // Device or SwapChain changed! We must re-initialize ImGui
+                    ImGui_ImplDX11_Shutdown();
+                    ImGui_ImplWin32_Shutdown();
+                    ImGui::DestroyContext();
+                    
+                    if (pRenderTarget)
+                    {
+                        pRenderTarget->Release();
+                        pRenderTarget = nullptr;
+                    }
+                    if (pContext)
+                    {
+                        pContext->Release();
+                        pContext = nullptr;
+                    }
+                    if (pDevice)
+                    {
+                        pDevice->Release();
+                        pDevice = nullptr;
+                    }
+                    
+                    // Unhook WndProc so it can be re-hooked properly
+                    SetWindowLongPtr(hGameWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(oWndProc));
+                    oWndProc = nullptr;
+                    
+                    bInitialized = false;
+                }
+            
+            if (!bInitialized)
+            {
+                // Skip rendering this frame until we re-initialize next frame
                 return oPresent(pSwapChain, SyncInterval, Flags);
             }
         }
@@ -160,8 +213,11 @@ namespace Core
         UI::Menu::RenderOverlay();
 
         ImGui::Render();
-        pContext->OMSetRenderTargets(1, &pRenderTarget, nullptr);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        if (pRenderTarget)
+        {
+            pContext->OMSetRenderTargets(1, &pRenderTarget, nullptr);
+            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        }
 
         return oPresent(pSwapChain, SyncInterval, Flags);
     }
@@ -170,18 +226,33 @@ namespace Core
     {
         if (pRenderTarget)
         {
-            pContext->OMSetRenderTargets(0, nullptr, nullptr);
+            if (pContext)
+            {
+                pContext->OMSetRenderTargets(0, nullptr, nullptr);
+            }
             pRenderTarget->Release();
             pRenderTarget = nullptr;
         }
 
+        if (bInitialized)
+        {
+            ImGui_ImplDX11_InvalidateDeviceObjects();
+        }
+
         HRESULT hr = oResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, Flags);
 
-        ID3D11Texture2D* pBuffer = nullptr;
-        pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&pBuffer));
-        if (pBuffer)
+        if (bInitialized)
         {
-            pDevice->CreateRenderTargetView(pBuffer, nullptr, &pRenderTarget);
+            ImGui_ImplDX11_CreateDeviceObjects();
+        }
+
+        ID3D11Texture2D* pBuffer = nullptr;
+        if (SUCCEEDED(pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&pBuffer))))
+        {
+            if (pDevice)
+            {
+                pDevice->CreateRenderTargetView(pBuffer, nullptr, &pRenderTarget);
+            }
             pBuffer->Release();
         }
 
