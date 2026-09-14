@@ -16,7 +16,6 @@ An all in one trainer for **Mirror's Edge Catalyst**
 
 ### In-Game Usage
 * Press **`M`** to toggle the trainer menu on and off.
-* Use the UI to enable cheats, change settings, or customize your physics sliders.
 * All hotkeys can be rebound inside the Settings tab of the menu. Your settings will automatically save to a `config.ini` file in the game's directory.
 
 #### Default Hotkeys:
