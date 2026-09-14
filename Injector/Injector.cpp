@@ -220,34 +220,94 @@ int main()
     }
 
     std::wcout << L"[+] Found DLL: " << fullDllPath << L"\n";
-    std::wcout << L"[*] Looking for " << targetProcess << L"...\n";
-
     DWORD pid = 0;
-    while ((pid = GetProcessIdByName(targetProcess)) == 0)
-    {
-        Sleep(500);
-    }
-    std::wcout << L"[+] Target process found! (PID: " << pid << L")\n";
-
-    // Wait for the window to be created
-    std::wcout << L"[*] Waiting for game window to be ready...\n";
     HWND hGameWindow = nullptr;
-    while (!(hGameWindow = GetGameWindow(pid)))
-    {
-        Sleep(500);
-    }
 
-    if (hGameWindow)
+    while (true)
     {
-        std::wcout << L"[+] Game window detected. Verifying responsiveness...\n";
-        DWORD_PTR result;
-        int checkCount = 0;
-        while (!SendMessageTimeoutW(hGameWindow, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 1000, &result) && checkCount < 10)
+        std::wcout << L"[*] Looking for " << targetProcess << L"...\n";
+        while ((pid = GetProcessIdByName(targetProcess)) == 0)
         {
-            std::wcout << L"[*] Game is busy initializing... waiting...\n";
-            Sleep(1000);
-            checkCount++;
+            Sleep(500);
         }
+        std::wcout << L"[+] Target process found! (PID: " << pid << L")\n";
+
+        // Wait for the window to be created
+        std::wcout << L"[*] Waiting for game window to be ready...\n";
+        bool processDied = false;
+        
+        while (!(hGameWindow = GetGameWindow(pid)))
+        {
+            Sleep(500);
+            
+            // Check if process still exists
+            HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+            if (hProc)
+            {
+                DWORD exitCode = 0;
+                if (GetExitCodeProcess(hProc, &exitCode) && exitCode != STILL_ACTIVE)
+                {
+                    processDied = true;
+                }
+                CloseHandle(hProc);
+            }
+            else
+            {
+                processDied = true;
+            }
+
+            if (processDied)
+            {
+                std::wcout << L"[-] Process closed before window was ready. Restarting search...\n\n";
+                break;
+            }
+        }
+
+        if (processDied) 
+        {
+            continue; // Loop back and search for a new PID
+        }
+
+        if (hGameWindow)
+        {
+            std::wcout << L"[+] Game window detected. Verifying responsiveness...\n";
+            DWORD_PTR result;
+            int checkCount = 0;
+            while (!SendMessageTimeoutW(hGameWindow, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 1000, &result) && checkCount < 10)
+            {
+                // Verify process didn't die while we were checking window responsiveness
+                HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+                if (hProc)
+                {
+                    DWORD exitCode = 0;
+                    if (GetExitCodeProcess(hProc, &exitCode) && exitCode != STILL_ACTIVE)
+                        processDied = true;
+                    CloseHandle(hProc);
+                }
+                else
+                {
+                    processDied = true;
+                }
+                
+                if (processDied)
+                {
+                    std::wcout << L"[-] Process died during responsiveness check. Restarting search...\n\n";
+                    break;
+                }
+                
+                std::wcout << L"[*] Game is busy initializing... waiting...\n";
+                Sleep(1000);
+                checkCount++;
+            }
+        }
+        
+        if (processDied)
+        {
+            continue; // Loop back and search for a new PID
+        }
+
+        // If we got here, the process is alive, window is found, and it's responsive.
+        break;
     }
 
     std::wcout << L"[+] Injecting " << dllName << L" into process...\n";
