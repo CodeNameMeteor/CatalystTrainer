@@ -1,6 +1,6 @@
 # Mirror's Edge Catalyst Trainer
 
-A powerful, feature-rich internal trainer for **Mirror's Edge Catalyst**
+An all in one trainer for **Mirror's Edge Catalyst**
 
 
 ## How to Use
