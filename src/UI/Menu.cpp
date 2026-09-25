@@ -143,16 +143,31 @@ namespace UI
         ImGui::Text("World & Environment Controls");
         ImGui::Separator();
 
-        float timeOfDay = cfg.State.freezeTime ? cfg.State.frozenTimeValue : game.GetTimeOfDay();
-        int hours = static_cast<int>(timeOfDay / 3600.0f);
-        if (ImGui::SliderInt("Time of Day (Hours)", &hours, 0, 24))
+
+        float currentRawTime = cfg.State.freezeTime ? cfg.State.frozenTimeValue : game.GetTimeOfDay();
+
+        float normalizedTime = fmod(currentRawTime, 86400.0f);
+        if (normalizedTime < 0.0f) normalizedTime += 86400.0f;
+
+        float hours = normalizedTime / 3600.0f;
+
+        if (ImGui::SliderFloat("Time of Day (Hours)", &hours, 0.0f, 23.99f, "%.2f hrs"))
         {
-            float newTime = static_cast<float>(hours * 3600);
+            float newTime = hours * 3600.0f;
             cfg.State.frozenTimeValue = newTime;
             Core::Memory::SafeWrite<float>(game.Addrs.timeOfDay, newTime);
         }
 
-        ImGui::Checkbox("Freeze Time of Day", &cfg.State.freezeTime);
+        // Ensure frozen time stays enforced every frame if active
+        if (ImGui::Checkbox("Freeze Time of Day", &cfg.State.freezeTime))
+        {
+            if (cfg.State.freezeTime)
+            {
+                // Capture current time at the exact instant freeze is turned on
+                cfg.State.frozenTimeValue = normalizedTime;
+            }
+        }
+
         if (ImGui::SliderFloat("Game Time Scale", &cfg.State.timeScale, 0.1f, 10.0f))
         {
             uintptr_t engine = Game::Offsets::EngineSettings();
