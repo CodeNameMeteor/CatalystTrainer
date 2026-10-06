@@ -46,7 +46,7 @@ Please don't submit leaderboard or time trial results while using the trainer.
 ## Known Issues
 
 
-* Crashes after injecting when using full screen(Fix implemented, if it crashes try borderless window)
+* Exclusive fullscreen used to crash when the game recreated its swap chain (alt-tab, resolution change). This should now be fixed; if it still crashes, use borderless window and please report it with `trainer_log.txt`.
 * The memory offsets are for one specific build of the game. The Settings tab shows the detected build; on a build known not to match, the trainer disables all of its memory writes.
 
 ---

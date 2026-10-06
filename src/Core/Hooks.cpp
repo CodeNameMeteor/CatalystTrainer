@@ -23,10 +23,8 @@ extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam
 namespace Core
 {
     typedef HRESULT(__stdcall* PresentFn)(IDXGISwapChain*, UINT, UINT);
-    typedef HRESULT(__stdcall* ResizeBuffersFn)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
 
     static PresentFn oPresent = nullptr;
-    static ResizeBuffersFn oResizeBuffers = nullptr;
 
     // Shared with the game's window thread
     static std::atomic<WNDPROC> oWndProc{ nullptr };
@@ -42,8 +40,6 @@ namespace Core
     // Render thread state (guarded by g_ImGuiMutex where the window thread or teardown can also touch it)
     static ID3D11Device* pDevice = nullptr;
     static ID3D11DeviceContext* pContext = nullptr;
-    static ID3D11RenderTargetView* pRenderTarget = nullptr;
-    static IDXGISwapChain* pLastSwapChain = nullptr;
     static bool bImGuiContext = false;   // ImGui context + Win32 backend created
     static bool bDx11Ready = false;      // DX11 backend initialised for pDevice
     static std::string g_ImGuiIniPath;
@@ -150,32 +146,6 @@ namespace Core
             oWndProc.store(reinterpret_cast<WNDPROC>(previous));
     }
 
-    static void ReleaseRenderTarget()
-    {
-        if (pRenderTarget)
-        {
-            pRenderTarget->Release();
-            pRenderTarget = nullptr;
-        }
-    }
-
-    static void CreateRenderTarget(IDXGISwapChain* pSwapChain)
-    {
-        ID3D11Texture2D* pBackBuffer = nullptr;
-        if (FAILED(pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&pBackBuffer))) || !pBackBuffer)
-        {
-            Log("Present: could not get the back buffer");
-            return;
-        }
-
-        if (FAILED(pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &pRenderTarget)))
-        {
-            Log("Present: could not create a render target view");
-            pRenderTarget = nullptr;
-        }
-        pBackBuffer->Release();
-    }
-
     static void ShutdownDx11Backend()
     {
         if (bDx11Ready)
@@ -183,7 +153,6 @@ namespace Core
             ImGui_ImplDX11_Shutdown();
             bDx11Ready = false;
         }
-        ReleaseRenderTarget();
         if (pContext)
         {
             pContext->Release();
@@ -194,7 +163,6 @@ namespace Core
             pDevice->Release();
             pDevice = nullptr;
         }
-        pLastSwapChain = nullptr;
     }
 
     static void ApplyStyle()
@@ -265,22 +233,56 @@ namespace Core
         bImGuiContext = true;
     }
 
-    // Makes sure ImGui and its DX11 backend match the swap chain being presented. Returns false to skip this frame.
+    static bool IsWindowDrawable(HWND window)
+    {
+        RECT rect{};
+        return window && !IsIconic(window) && GetClientRect(window, &rect) &&
+               rect.right > rect.left && rect.bottom > rect.top;
+    }
+
+    // Makes sure ImGui and its DX11 backend match the device and window being presented to.
+    // Returns false to skip drawing on this Present call.
     static bool EnsureInitialized(IDXGISwapChain* pSwapChain)
     {
+        DXGI_SWAP_CHAIN_DESC desc{};
+        if (FAILED(pSwapChain->GetDesc(&desc)) || !desc.OutputWindow)
+            return false;
+
+        // If the game presents to a second window while the one we're attached to is still alive and shown,
+        // ignore it rather than bouncing the window hook back and forth
+        HWND current = hGameWindow.load();
+        if (current && current != desc.OutputWindow && IsWindow(current) && IsWindowVisible(current))
+            return false;
+
         ID3D11Device* device = nullptr;
         if (FAILED(pSwapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))) || !device)
             return false;
 
         std::lock_guard<std::mutex> lock(g_ImGuiMutex);
 
-        // Device or swap chain changed (e.g. on a full screen toggle): only the DX11 backend is recreated.
+        // The game recreated its device (e.g. after a display mode change): rebuild only the DX11 backend.
         // The ImGui context and the window procedure hook stay in place.
-        if (bDx11Ready && (pSwapChain != pLastSwapChain || device != pDevice))
+        if (bDx11Ready && device != pDevice)
         {
-            Log("Present: swap chain or device changed, re-initialising renderer");
+            Log("Present: D3D11 device changed, re-initialising renderer");
             ShutdownDx11Backend();
         }
+
+        // The game recreated its window: move the window hook and ImGui's Win32 backend to the new one
+        if (current != desc.OutputWindow)
+        {
+            if (current)
+                Log("Present: game window changed, re-attaching");
+            if (bImGuiContext)
+            {
+                ImGui_ImplWin32_Shutdown();
+                ImGui_ImplWin32_Init(desc.OutputWindow);
+            }
+            InstallWndProc(desc.OutputWindow);
+        }
+
+        if (!bImGuiContext)
+            CreateImGuiContext(desc.OutputWindow);
 
         if (bDx11Ready)
         {
@@ -288,26 +290,8 @@ namespace Core
             return true;
         }
 
-        DXGI_SWAP_CHAIN_DESC desc{};
-        if (FAILED(pSwapChain->GetDesc(&desc)) || !desc.OutputWindow)
-        {
-            device->Release();
-            return false;
-        }
-
-        if (bImGuiContext && hGameWindow.load() != desc.OutputWindow)
-        {
-            ImGui_ImplWin32_Shutdown();
-            ImGui_ImplWin32_Init(desc.OutputWindow);
-        }
-        InstallWndProc(desc.OutputWindow);
-
         pDevice = device; // Keeps the reference from GetDevice
         pDevice->GetImmediateContext(&pContext);
-        CreateRenderTarget(pSwapChain);
-
-        if (!bImGuiContext)
-            CreateImGuiContext(desc.OutputWindow);
 
         if (!ImGui_ImplDX11_Init(pDevice, pContext))
         {
@@ -317,13 +301,33 @@ namespace Core
         }
 
         bDx11Ready = true;
-        pLastSwapChain = pSwapChain;
         return true;
     }
 
-    static void RenderFrame()
+    static void RenderFrame(IDXGISwapChain* pSwapChain)
     {
         std::lock_guard<std::mutex> lock(g_ImGuiMutex);
+
+        // The back buffer is only referenced while drawing. Holding a view on it between frames stops the game
+        // from resizing or releasing its swap chain; in exclusive fullscreen the old swap chain then keeps the
+        // display and the game's new swap chain fails to go fullscreen, which crashes the game.
+        ID3D11Texture2D* backBuffer = nullptr;
+        if (FAILED(pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer))) || !backBuffer)
+            return;
+
+        ID3D11RenderTargetView* renderTarget = nullptr;
+        HRESULT hr = pDevice->CreateRenderTargetView(backBuffer, nullptr, &renderTarget);
+        backBuffer->Release();
+        if (FAILED(hr) || !renderTarget)
+        {
+            static bool s_Logged = false;
+            if (!s_Logged)
+            {
+                Log("Present: could not create a render target view (0x%08lX)", static_cast<unsigned long>(hr));
+                s_Logged = true;
+            }
+            return;
+        }
 
         ApplyUiScale();
 
@@ -335,54 +339,38 @@ namespace Core
         UI::Menu::RenderOverlay();
 
         ImGui::Render();
-        if (pRenderTarget)
+
+        // ImGui's DX11 backend restores most pipeline state but not the render targets, so put the game's back
+        ID3D11RenderTargetView* savedTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+        ID3D11DepthStencilView* savedDepth = nullptr;
+        pContext->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedTargets, &savedDepth);
+
+        pContext->OMSetRenderTargets(1, &renderTarget, nullptr);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+        pContext->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedTargets, savedDepth);
+        for (ID3D11RenderTargetView* target : savedTargets)
         {
-            pContext->OMSetRenderTargets(1, &pRenderTarget, nullptr);
-            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            if (target) target->Release();
         }
+        if (savedDepth) savedDepth->Release();
+        renderTarget->Release();
     }
 
     HRESULT __stdcall HookedPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
     {
         InFlightGuard guard;
 
-        // After an unload request the trainer's own thread tears everything down; just pass through
-        if (!g_UnloadRequested.load() && EnsureInitialized(pSwapChain))
-            RenderFrame();
+        // After an unload request the trainer's own thread tears everything down; just pass through.
+        // DXGI_PRESENT_TEST only checks whether the window is occluded and shows nothing, so don't draw for it,
+        // and don't draw while the window is minimised (e.g. after alt-tabbing out of fullscreen).
+        if (!g_UnloadRequested.load() && !(Flags & DXGI_PRESENT_TEST) &&
+            EnsureInitialized(pSwapChain) && IsWindowDrawable(hGameWindow.load()))
+        {
+            RenderFrame(pSwapChain);
+        }
 
         return oPresent(pSwapChain, SyncInterval, Flags);
-    }
-
-    HRESULT __stdcall HookedResizeBuffers(IDXGISwapChain* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT Flags)
-    {
-        InFlightGuard guard;
-
-        if (g_UnloadRequested.load())
-            return oResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, Flags);
-
-        bool ours = false;
-        {
-            // Our render target holds a back-buffer reference, which must be released before resizing
-            std::lock_guard<std::mutex> lock(g_ImGuiMutex);
-            ours = (pSwapChain == pLastSwapChain);
-            if (ours && pRenderTarget)
-            {
-                if (pContext)
-                    pContext->OMSetRenderTargets(0, nullptr, nullptr);
-                ReleaseRenderTarget();
-            }
-        }
-
-        HRESULT hr = oResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, Flags);
-
-        if (ours)
-        {
-            std::lock_guard<std::mutex> lock(g_ImGuiMutex);
-            if (pDevice && pSwapChain == pLastSwapChain && !pRenderTarget)
-                CreateRenderTarget(pSwapChain);
-        }
-
-        return hr;
     }
 
     bool InitializeHooks()
@@ -390,16 +378,17 @@ namespace Core
         if (kiero::init(kiero::RenderType::D3D11) != kiero::Status::Success)
             return false;
 
-        if (kiero::bind(8, reinterpret_cast<void**>(&oPresent), reinterpret_cast<void*>(HookedPresent)) != kiero::Status::Success ||
-            kiero::bind(13, reinterpret_cast<void**>(&oResizeBuffers), reinterpret_cast<void*>(HookedResizeBuffers)) != kiero::Status::Success)
+        // Only Present is hooked: the trainer holds no swap chain resources between frames, so it doesn't need
+        // to react to ResizeBuffers
+        if (kiero::bind(8, reinterpret_cast<void**>(&oPresent), reinterpret_cast<void*>(HookedPresent)) != kiero::Status::Success)
         {
-            Log("Hooks: failed to hook Present/ResizeBuffers");
+            Log("Hooks: failed to hook Present");
             kiero::shutdown();
             MH_Uninitialize();
             return false;
         }
 
-        Log("Hooks: Present and ResizeBuffers hooked");
+        Log("Hooks: Present hooked");
         return true;
     }
 
