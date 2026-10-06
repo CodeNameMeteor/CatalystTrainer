@@ -17,8 +17,8 @@ endif()
 # ==========================================
 # 1. Trainer DLL Target
 # ==========================================
-file(GLOB_RECURSE TRAINER_SOURCES 
-    "src/*.cpp" 
+file(GLOB_RECURSE TRAINER_SOURCES CONFIGURE_DEPENDS
+    "src/*.cpp"
     "src/*.c"
 )
 
@@ -32,13 +32,42 @@ target_include_directories(MEC_Trainer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/kiero/minhook/include
 )
 
+# The ImGui demo window is never shown, so don't ship its code
+target_compile_definitions(MEC_Trainer PRIVATE IMGUI_DISABLE_DEMO_WINDOWS)
+
 target_link_libraries(MEC_Trainer PRIVATE
     d3d11
     dxgi
 )
+
+if(MSVC)
+    target_compile_options(MEC_Trainer PRIVATE /guard:cf)
+    target_link_options(MEC_Trainer PRIVATE /guard:cf)
+endif()
 
 # ==========================================
 # 2. Standalone Smart Injector Target
 # ==========================================
 add_executable(MEC_Injector "Injector/Injector.cpp")
 target_compile_features(MEC_Injector PRIVATE cxx_std_20)
+
+if(MSVC)
+    target_compile_options(MEC_Injector PRIVATE /guard:cf)
+    # MSVC's default manifest already runs the injector as the current user (asInvoker)
+    target_link_options(MEC_Injector PRIVATE /guard:cf)
+endif()
+
+# ==========================================
+# 3. Unit tests (pure logic that runs without the game)
+# ==========================================
+option(MEC_BUILD_TESTS "Build the unit tests" ON)
+if(MEC_BUILD_TESTS)
+    enable_testing()
+    add_executable(MEC_Tests
+        "tests/UnitTests.cpp"
+        "src/Core/Config.cpp"
+        "src/Core/Log.cpp"
+    )
+    target_include_directories(MEC_Tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME MEC_Tests COMMAND MEC_Tests)
+endif()
