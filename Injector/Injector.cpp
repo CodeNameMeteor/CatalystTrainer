@@ -2,38 +2,39 @@
 #include <TlHelp32.h>
 #include <iostream>
 #include <string>
+#include <vector>
 #include <filesystem>
 #include <conio.h>
+#include <fcntl.h>
+#include <io.h>
 
-// Enable SeDebugPrivilege for administrator access
-bool EnableDebugPrivilege()
+// How long to wait for LoadLibraryW in the game before giving up on knowing the result
+constexpr DWORD kInjectionTimeoutMs = 30000;
+// After this long without a window title match, fall back to the game's largest visible window
+constexpr DWORD kTitleMatchFallbackMs = 60000;
+
+// Directory containing this executable (not the current working directory, which the user does not control)
+std::filesystem::path GetExecutableDirectory()
 {
-    HANDLE hToken;
-    LUID luid;
-    TOKEN_PRIVILEGES tkp;
-
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
-        return false;
-
-    if (!LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &luid))
+    std::wstring path(MAX_PATH, L'\0');
+    while (true)
     {
-        CloseHandle(hToken);
-        return false;
+        DWORD len = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+        if (len == 0) return {};
+        if (len < path.size())
+        {
+            path.resize(len);
+            break;
+        }
+        path.resize(path.size() * 2);
     }
-
-    tkp.PrivilegeCount = 1;
-    tkp.Privileges[0].Luid = luid;
-    tkp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-
-    BOOL status = AdjustTokenPrivileges(hToken, FALSE, &tkp, sizeof(tkp), NULL, NULL);
-    CloseHandle(hToken);
-    return status != FALSE;
+    return std::filesystem::path(path).parent_path();
 }
 
-// Find process ID by executable name
-DWORD GetProcessIdByName(const std::wstring& processName)
+// Find all process IDs with the given executable name
+std::vector<DWORD> GetProcessIdsByName(const std::wstring& processName)
 {
-    DWORD pid = 0;
+    std::vector<DWORD> pids;
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot != INVALID_HANDLE_VALUE)
     {
@@ -44,22 +45,32 @@ DWORD GetProcessIdByName(const std::wstring& processName)
             do
             {
                 if (_wcsicmp(processName.c_str(), entry.szExeFile) == 0)
-                {
-                    pid = entry.th32ProcessID;
-                    break;
-                }
+                    pids.push_back(entry.th32ProcessID);
             } while (Process32NextW(snapshot, &entry));
         }
         CloseHandle(snapshot);
     }
-    return pid;
+    return pids;
+}
+
+bool IsProcessAlive(DWORD pid)
+{
+    HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!hProc) return false;
+
+    DWORD exitCode = 0;
+    bool alive = GetExitCodeProcess(hProc, &exitCode) && exitCode == STILL_ACTIVE;
+    CloseHandle(hProc);
+    return alive;
 }
 
 // Find main window belonging to PID
 struct WindowSearchData
 {
     DWORD pid;
-    HWND hWnd;
+    HWND hWnd;          // Window whose title matches the game
+    HWND fallback;      // Largest plausible window, used if the title never matches (e.g. localised title)
+    int fallbackArea;
 };
 
 BOOL CALLBACK EnumWindowsCallback(HWND hWnd, LPARAM lParam)
@@ -70,24 +81,20 @@ BOOL CALLBACK EnumWindowsCallback(HWND hWnd, LPARAM lParam)
 
     if (windowPid == data->pid && IsWindowVisible(hWnd))
     {
-        wchar_t windowTitle[256];
+        wchar_t windowTitle[256] = {0};
         GetWindowTextW(hWnd, windowTitle, 256);
         std::wstring wsTitle(windowTitle);
 
-        wchar_t className[256];
-        GetClassNameW(hWnd, className, 256);
-        std::wstring wsClass(className);
-
-        // Ignore EA Activation or dummy windows
-        if (wsTitle.find(L"Activation") != std::wstring::npos ||
-            wsTitle.find(L"EA") != std::wstring::npos ||
-            wsTitle.empty())
+        // Ignore EA activation or dummy windows
+        if (wsTitle.empty() ||
+            wsTitle.find(L"Activation") != std::wstring::npos ||
+            wsTitle.find(L"EA") != std::wstring::npos)
         {
             return TRUE; // Continue looking
         }
 
         // Check window size to ignore dummy/splash windows
-        RECT rect;
+        RECT rect{};
         GetClientRect(hWnd, &rect);
         int width = rect.right - rect.left;
         int height = rect.bottom - rect.top;
@@ -98,37 +105,72 @@ BOOL CALLBACK EnumWindowsCallback(HWND hWnd, LPARAM lParam)
         }
 
         // Specifically look for the game window by title
-        if (wsTitle.find(L"Mirror's Edge") != std::wstring::npos || 
+        if (wsTitle.find(L"Mirror's Edge") != std::wstring::npos ||
             wsTitle.find(L"Catalyst") != std::wstring::npos)
         {
             data->hWnd = hWnd;
             return FALSE; // Found it! Stop enumerating
         }
+
+        if (width * height > data->fallbackArea)
+        {
+            data->fallback = hWnd;
+            data->fallbackArea = width * height;
+        }
     }
     return TRUE;
 }
 
-HWND GetGameWindow(DWORD pid)
+WindowSearchData FindGameWindow(DWORD pid)
 {
-    WindowSearchData data = { pid, nullptr };
+    WindowSearchData data = { pid, nullptr, nullptr, 0 };
     EnumWindows(EnumWindowsCallback, reinterpret_cast<LPARAM>(&data));
-    return data.hWnd;
+    return data;
 }
 
-bool InjectDLL(DWORD pid, const std::wstring& dllPath)
+// Returns the base address of the module with the given path in the target process, or 0
+uintptr_t FindRemoteModule(DWORD pid, const std::filesystem::path& modulePath)
+{
+    uintptr_t base = 0;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+    if (snapshot == INVALID_HANDLE_VALUE) return 0;
+
+    MODULEENTRY32W entry;
+    entry.dwSize = sizeof(entry);
+    if (Module32FirstW(snapshot, &entry))
+    {
+        do
+        {
+            std::error_code ec;
+            if (std::filesystem::equivalent(entry.szExePath, modulePath, ec))
+            {
+                base = reinterpret_cast<uintptr_t>(entry.modBaseAddr);
+                break;
+            }
+        } while (Module32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return base;
+}
+
+bool InjectDLL(DWORD pid, const std::filesystem::path& dllPath)
 {
     std::wcout << L"[*] Opening process (PID: " << pid << L")...\n";
-    HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+
+    // Only the rights needed to allocate, write and start a thread in the game
+    HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_LIMITED_INFORMATION |
+        PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
     if (!hProcess)
     {
         DWORD err = GetLastError();
         std::wcout << L"[-] Failed to open game process. Error code: " << err << L"\n";
-        if (err == 5)
-            std::wcout << L"    -> Access Denied: Please right-click and 'Run as administrator'!\n";
+        if (err == ERROR_ACCESS_DENIED)
+            std::wcout << L"    -> Access denied: the game is probably running as administrator. Start the game normally (not as administrator) and try again.\n";
         return false;
     }
 
-    size_t pathSize = (dllPath.size() + 1) * sizeof(wchar_t);
+    const std::wstring path = dllPath.wstring();
+    size_t pathSize = (path.size() + 1) * sizeof(wchar_t);
     LPVOID pRemoteBuf = VirtualAllocEx(hProcess, nullptr, pathSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!pRemoteBuf)
     {
@@ -137,7 +179,7 @@ bool InjectDLL(DWORD pid, const std::wstring& dllPath)
         return false;
     }
 
-    if (!WriteProcessMemory(hProcess, pRemoteBuf, dllPath.c_str(), pathSize, nullptr))
+    if (!WriteProcessMemory(hProcess, pRemoteBuf, path.c_str(), pathSize, nullptr))
     {
         std::wcout << L"[-] WriteProcessMemory failed. Error: " << GetLastError() << L"\n";
         VirtualFreeEx(hProcess, pRemoteBuf, 0, MEM_RELEASE);
@@ -146,7 +188,7 @@ bool InjectDLL(DWORD pid, const std::wstring& dllPath)
     }
 
     LPTHREAD_START_ROUTINE pLoadLibraryW = reinterpret_cast<LPTHREAD_START_ROUTINE>(
-        GetProcAddress(GetModuleHandleA("kernel32.dll"), "LoadLibraryW"));
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryW")));
 
     if (!pLoadLibraryW)
     {
@@ -167,163 +209,188 @@ bool InjectDLL(DWORD pid, const std::wstring& dllPath)
     }
 
     std::wcout << L"[*] Waiting for DLL initialization...\n";
-    WaitForSingleObject(hThread, 8000);
-
-    DWORD exitCode = 0;
-    GetExitCodeThread(hThread, &exitCode);
+    DWORD waitResult = WaitForSingleObject(hThread, kInjectionTimeoutMs);
     CloseHandle(hThread);
-    VirtualFreeEx(hProcess, pRemoteBuf, 0, MEM_RELEASE);
-    CloseHandle(hProcess);
 
-    if (exitCode == 0)
+    if (waitResult != WAIT_OBJECT_0)
     {
-        std::wcout << L"[-] LoadLibraryW in target process returned NULL (Module failed to load)!\n";
+        // LoadLibraryW may still be reading the path, so the buffer is deliberately left allocated
+        std::wcout << L"[-] The game did not finish loading the trainer within " << (kInjectionTimeoutMs / 1000)
+                   << L" seconds. It may still load; check the game in a moment.\n";
+        CloseHandle(hProcess);
         return false;
     }
 
-    std::wcout << L"[+] Remote module handle loaded at: 0x" << std::hex << exitCode << std::dec << L"\n";
+    VirtualFreeEx(hProcess, pRemoteBuf, 0, MEM_RELEASE);
+    CloseHandle(hProcess);
+
+    // The thread exit code only holds the low 32 bits of the module handle, so look the module up instead
+    uintptr_t moduleBase = FindRemoteModule(pid, dllPath);
+    if (!moduleBase)
+    {
+        std::wcout << L"[-] LoadLibraryW in target process failed (module not loaded)!\n";
+        return false;
+    }
+
+    std::wcout << L"[+] Trainer module loaded at: 0x" << std::hex << moduleBase << std::dec << L"\n";
     return true;
+}
+
+int Finish(bool success)
+{
+    if (success)
+    {
+        std::wcout << L"\n====================================================\n";
+        std::wcout << L"[+] INJECTION SUCCESSFUL!\n";
+        std::wcout << L"====================================================\n";
+        std::wcout << L"\nClosing in 5 seconds...\n";
+        Sleep(5000);
+        return 0;
+    }
+
+    // Leave error messages on screen until the user has read them
+    std::wcout << L"\n[-] INJECTION FAILED. Check error messages above.\n";
+    std::wcout << L"Press any key to exit...\n";
+    _getch();
+    return 1;
 }
 
 int main()
 {
+    // Without this, printing a non-ASCII path (e.g. a user name with accents) breaks all further output
+    _setmode(_fileno(stdout), _O_U16TEXT);
+
     SetConsoleTitleW(L"Mirror's Edge Catalyst Trainer Injector");
     std::wcout << L"====================================================\n";
     std::wcout << L"   Mirror's Edge Catalyst - Trainer Injector          \n";
     std::wcout << L"====================================================\n\n";
 
-    EnableDebugPrivilege();
+    const std::wstring targetProcess = L"MirrorsEdgeCatalyst.exe";
+    const std::wstring dllName = L"MEC_Trainer.dll";
 
-    std::wstring targetProcess = L"MirrorsEdgeCatalyst.exe";
-    std::wstring dllName = L"MEC_Trainer.dll";
+    // Only ever load the trainer that sits next to the injector
+    const std::filesystem::path exeDir = GetExecutableDirectory();
+    const std::filesystem::path dllPath = exeDir / dllName;
 
-    wchar_t currentDir[MAX_PATH];
-    GetCurrentDirectoryW(MAX_PATH, currentDir);
-    std::wstring fullDllPath = std::wstring(currentDir) + L"\\" + dllName;
-
-    // Check if dll exists in current directory or in Release folder
-    if (!std::filesystem::exists(fullDllPath))
+    std::error_code ec;
+    if (exeDir.empty() || !std::filesystem::is_regular_file(dllPath, ec))
     {
-        std::wstring altPath = std::wstring(currentDir) + L"\\Release\\" + dllName;
-        if (std::filesystem::exists(altPath))
-        {
-            fullDllPath = altPath;
-        }
-        else
-        {
-            std::wcout << L"[-] Error: Trainer DLL was not found in the injector directory!\n";
-            std::wcout << L"    Expected: " << fullDllPath << L"\n\n";
-            std::wcout << L"Press any key to exit...\n";
-            _getch();
-            return 1;
-        }
+        std::wcout << L"[-] Error: Trainer DLL was not found next to the injector!\n";
+        std::wcout << L"    Expected: " << dllPath.wstring() << L"\n";
+        return Finish(false);
     }
 
-    std::wcout << L"[+] Found DLL: " << fullDllPath << L"\n";
+    std::wcout << L"[+] Found DLL: " << dllPath.wstring() << L"\n";
     DWORD pid = 0;
     HWND hGameWindow = nullptr;
 
     while (true)
     {
         std::wcout << L"[*] Looking for " << targetProcess << L"...\n";
-        while ((pid = GetProcessIdByName(targetProcess)) == 0)
+        std::vector<DWORD> pids;
+        while ((pids = GetProcessIdsByName(targetProcess)).empty())
         {
             Sleep(500);
         }
-        std::wcout << L"[+] Target process found! (PID: " << pid << L")\n";
+        if (pids.size() > 1)
+            std::wcout << L"[!] " << pids.size() << L" game processes found, using the one with a game window.\n";
+        std::wcout << L"[+] Target process found!\n";
 
         // Wait for the window to be created
         std::wcout << L"[*] Waiting for game window to be ready...\n";
-        bool processDied = false;
-        
-        while (!(hGameWindow = GetGameWindow(pid)))
+        bool processesDied = false;
+        DWORD waitStart = GetTickCount();
+        DWORD lastNotice = waitStart;
+        pid = 0;
+        hGameWindow = nullptr;
+
+        while (!hGameWindow)
         {
-            Sleep(500);
-            
-            // Check if process still exists
-            HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-            if (hProc)
+            bool anyAlive = false;
+            for (DWORD candidate : pids)
             {
-                DWORD exitCode = 0;
-                if (GetExitCodeProcess(hProc, &exitCode) && exitCode != STILL_ACTIVE)
+                if (!IsProcessAlive(candidate)) continue;
+                anyAlive = true;
+
+                WindowSearchData found = FindGameWindow(candidate);
+                HWND window = found.hWnd;
+                if (!window && found.fallback && GetTickCount() - waitStart > kTitleMatchFallbackMs)
                 {
-                    processDied = true;
+                    std::wcout << L"[!] No window titled \"Mirror's Edge\" found; using the game's main window instead.\n";
+                    window = found.fallback;
                 }
-                CloseHandle(hProc);
-            }
-            else
-            {
-                processDied = true;
+
+                if (window)
+                {
+                    pid = candidate;
+                    hGameWindow = window;
+                    break;
+                }
             }
 
-            if (processDied)
+            if (!anyAlive)
             {
+                processesDied = true;
                 std::wcout << L"[-] Process closed before window was ready. Restarting search...\n\n";
                 break;
             }
+
+            if (!hGameWindow)
+            {
+                if (GetTickCount() - lastNotice > 15000)
+                {
+                    std::wcout << L"[*] Still waiting for the game window (is the game past the EA app splash screen?)...\n";
+                    lastNotice = GetTickCount();
+                }
+                Sleep(500);
+            }
         }
 
-        if (processDied) 
+        if (processesDied)
         {
             continue; // Loop back and search for a new PID
         }
 
-        if (hGameWindow)
+        std::wcout << L"[+] Game window detected (PID: " << pid << L"). Verifying responsiveness...\n";
+        DWORD_PTR result;
+        int checkCount = 0;
+        bool processDied = false;
+        bool responsive = false;
+        while (checkCount < 10)
         {
-            std::wcout << L"[+] Game window detected. Verifying responsiveness...\n";
-            DWORD_PTR result;
-            int checkCount = 0;
-            while (!SendMessageTimeoutW(hGameWindow, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 1000, &result) && checkCount < 10)
+            if (SendMessageTimeoutW(hGameWindow, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 1000, &result))
             {
-                // Verify process didn't die while we were checking window responsiveness
-                HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-                if (hProc)
-                {
-                    DWORD exitCode = 0;
-                    if (GetExitCodeProcess(hProc, &exitCode) && exitCode != STILL_ACTIVE)
-                        processDied = true;
-                    CloseHandle(hProc);
-                }
-                else
-                {
-                    processDied = true;
-                }
-                
-                if (processDied)
-                {
-                    std::wcout << L"[-] Process died during responsiveness check. Restarting search...\n\n";
-                    break;
-                }
-                
-                std::wcout << L"[*] Game is busy initializing... waiting...\n";
-                Sleep(1000);
-                checkCount++;
+                responsive = true;
+                break;
             }
+
+            // Verify process didn't die while we were checking window responsiveness
+            if (!IsProcessAlive(pid))
+            {
+                processDied = true;
+                std::wcout << L"[-] Process died during responsiveness check. Restarting search...\n\n";
+                break;
+            }
+
+            std::wcout << L"[*] Game is busy initializing... waiting...\n";
+            Sleep(1000);
+            checkCount++;
         }
-        
+
         if (processDied)
         {
             continue; // Loop back and search for a new PID
         }
 
-        // If we got here, the process is alive, window is found, and it's responsive.
+        if (!responsive)
+        {
+            std::wcout << L"[!] The game window is still not responding; injecting anyway.\n";
+        }
+
+        // If we got here, the process is alive and the window is found.
         break;
     }
 
     std::wcout << L"[+] Injecting " << dllName << L" into process...\n";
-
-    if (InjectDLL(pid, fullDllPath))
-    {
-        std::wcout << L"\n====================================================\n";
-        std::wcout << L"[+] INJECTION SUCCESSFUL!\n";
-        std::wcout << L"====================================================\n";
-    }
-    else
-    {
-        std::wcout << L"\n[-] INJECTION FAILED. Check error messages above.\n";
-    }
-
-    std::wcout << L"\nClosing in 5 seconds...\n";
-    Sleep(5000);
-    return 0;
+    return Finish(InjectDLL(pid, dllPath));
 }
