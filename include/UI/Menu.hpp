@@ -1,16 +1,17 @@
 #pragma once
-#include <d3d11.h>
+#include <atomic>
 
 namespace UI
 {
-    extern int* g_ActiveBindingKey;
+    // Keybind currently waiting for a key press (set by the menu, completed by the window procedure)
+    extern std::atomic<std::atomic<int>*> g_ActiveBindingKey;
 
     class Menu
     {
     public:
         static void Render();
         static void RenderOverlay();
-        static void DrawHotkey(const char* label, int* key);
+        static void DrawHotkey(const char* label, std::atomic<int>* key, bool isDuplicate);
 
     private:
         static void DrawTrainerTab();
